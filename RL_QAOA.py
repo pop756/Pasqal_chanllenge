@@ -122,9 +122,9 @@ class RL_QAOA:
             # Compute softmax rewards and normalize
 
             batch_mean = (np.array(value_list) - np.mean(value_list))
-            batch_plus = np.where(batch_mean < 0, batch_mean, 0)
-            softmaxed_rewards = signed_softmax_rewards(batch_plus, beta=15)*episodes
-            for index, val in enumerate(softmaxed_rewards):
+            #batch_plus = np.where(batch_mean < 0, batch_mean, 0)
+            #softmaxed_rewards = signed_softmax_rewards(batch_plus, beta=15)*episodes
+            for index, val in enumerate(batch_mean):
                 QAOA_diff_list[index] *= -batch_mean[index]
                 beta_diff_list[index] *= -batch_mean[index]
 
@@ -134,7 +134,6 @@ class RL_QAOA:
             value_sum = np.mean(value_list)
             min_value = np.min(value_list)  # Find the lowest reward value
             min_index = np.argmin(value_list)  # Index of lowest reward value
-
             # Store values
             self.avg_values.append(value_sum)
             self.min_values.append(min_value)
@@ -197,10 +196,15 @@ class RL_QAOA:
             selected_edge_idx, policy, edge_res = self._select_edge_to_cut(Q_action, Q_init, edge_expectations)
 
             if cal_grad:
-                edge_res_grad = self._qaoa_edge_expectations_gradient(
+                """ edge_res_grad = self._qaoa_edge_expectations_gradient(
                     Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)], selected_edge_idx
+                ) """
+                
+                edge_res_grad = self._qaoa_edge_expectations_gradients(
+                    Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
                 )
-                QAOA_diff = self._compute_log_pol_diff_idx(
+                
+                QAOA_diff = self._compute_log_pol_diff(
                     selected_edge_idx, Q_action, edge_res, edge_res_grad, policy
                 ) * self.gamma ** (Q_init.shape[0] - index)
                 beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
@@ -248,12 +252,17 @@ class RL_QAOA:
         action_space = self._action_space(Q_action)
 
         try:
+            value = abs(np.array(edge_expectations))
+            
+            value = value - np.amax(value)
             interactions = abs(np.array(edge_expectations)) * self.b[action_space]
+            interactions -= np.amax(interactions)
         except:
             print(abs(np.array(edge_expectations)), self.b[action_space])
             raise ValueError("Invalid input", action_space, abs(np.array(edge_expectations)))
-
-        probabilities = torch.softmax(torch.tensor(interactions), dim=0).numpy()
+        interactions = np.exp(interactions)
+        probabilities = interactions/np.sum(interactions)
+        #probabilities = torch.softmax(torch.tensor(interactions), dim=0).numpy()
         selected_edge_idx = np.random.choice(len(probabilities), p=probabilities)
 
         return selected_edge_idx, probabilities, edge_expectations
@@ -675,7 +684,7 @@ def generate_upper_triangular_qubo(size, low=-10, high=10, integer=True, seed=No
     # Ensure diagonal values are positive (bias terms)
     np.fill_diagonal(Q,np.diagonal(Q))
 
-
+    
     return Q
 
 class AdamOptimizer:

@@ -109,4 +109,4 @@ The impact of this approach can be observed in the **`RL_QAOA_test.ipynb`** file
    ```
 
 
-### **3. Follow instructions from RL_QAOA_test.ipynb:**
+### **3. Follow instructions from RL_QAOA_simulation.ipynb:**

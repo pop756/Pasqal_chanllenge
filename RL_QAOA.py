@@ -14,6 +14,94 @@ import itertools
 import torch
 import pennylane as qml
 
+
+
+
+
+
+class TreeNode:
+    def __init__(self, key, value):
+        """
+        Initializes a tree node.
+        :param key: The unique identifier for the node.
+        :param value: The data associated with the node.
+        """
+        self.key = key  # Node's unique key
+        self.value = value  # Node's stored value
+        self.children = {}  # Dictionary to store child nodes (key -> TreeNode mapping)
+
+    def __repr__(self):
+        """
+        Returns a string representation of the node.
+        """
+        return f"TreeNode({self.key}: {self.value})"
+
+
+class Tree:
+    def __init__(self, root_key, root_value):
+        """
+        Initializes a tree with a root node.
+        :param root_key: The unique key for the root node.
+        :param root_value: The data associated with the root node.
+        """
+        self.root = TreeNode(root_key, root_value)  # Create the root node
+        self.state = self.root  # Set the current state to the root node
+        self.node_num = 0
+    def has_child(self, key):
+        """
+        Checks if the current state (node) has a child with the given key.
+        :param key: The key of the child node to check.
+        :return: True if the child exists, False otherwise.
+        """
+        return key in self.state.children  # Check if the key exists in the children dictionary
+
+    def move(self, key):
+        """
+        Moves the current state to a child node if it exists.
+        :param key: The key of the child node to move to.
+        :raises ValueError: If the child does not exist.
+        """
+        if self.has_child(key):  # If the child exists, move to it
+            self.state = self.state.children[key]
+
+        else:
+            raise ValueError(f"Error: No child with key '{key}' exists.")  # Raise an error if child doesn't exist
+
+    def create(self, key, value):
+        """
+        Creates a new child node under the current state if the key does not already exist.
+        :param key: The key of the new child node.
+        :param value: The value to store in the new node.
+        :raises ValueError: If the key already exists.
+        """
+        if not self.has_child(key):  # If the child does not exist, create it
+            new_node = TreeNode(key, value)
+            self.state.children[key] = new_node  # Add the new node to the children dictionary
+            self.node_num +=1
+        else:
+            raise ValueError(f"Error: Child '{key}' already exists.")  # Raise an error if child already exists
+
+    def reset_state(self):
+        """
+        Resets the current state back to the root node.
+        """
+        self.state = self.root  # Set state back to the root node
+
+
+    def display_tree(self, node=None, level=0):
+        """
+        Recursively prints the structure of the tree.
+        :param node: The node to start printing from (default is the root node).
+        :param level: The indentation level for printing the tree hierarchy.
+        """
+        if node is None:  # If no node is provided, start from the root
+            node = self.root
+        print("  " * level + f"{node.key}: {node.value}")  # Print the current node with indentation
+        for child in node.children.values():  # Iterate through all child nodes
+            self.display_tree(child, level + 1)  # Recursively print child nodes with increased indentation
+            
+            
+
 class RL_QAOA:
     """
     A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm) 
@@ -61,7 +149,7 @@ class RL_QAOA:
 
     """
 
-    def __init__(self, Q, n_c, init_paramter, b_vector, QAOA_depth, gamma=0.99, learning_rate_init=0.001):
+    def __init__(self, Q, n_c, init_paramter, b_vector, QAOA_depth, gamma=0.99, learning_rate_init=[0.01,0.05]):
         self.Q = Q
         self.n_c = n_c
         self.param = init_paramter
@@ -70,7 +158,9 @@ class RL_QAOA:
         self.qaoa_layer = QAOA_layer(QAOA_depth, Q)
         self.gamma = gamma
         self.optimzer = AdamOptimizer([init_paramter, b_vector], learning_rate_init=learning_rate_init)
-
+        self.lr = learning_rate_init
+        self.tree = Tree('root',None)
+        self.tree_grad = Tree('root',None)
         
     def RL_QAOA(self, episodes, epochs, correct_ans=None):
         self.avg_values = []
@@ -79,7 +169,7 @@ class RL_QAOA:
         self.best_states = []
         self.best_same_lists = []
         self.best_diff_lists = []
-
+        
         """
         Performs the reinforcement learning optimization process with progress tracking.
 
@@ -96,6 +186,14 @@ class RL_QAOA:
         """
 
         for j in range(epochs):
+            
+            if self.lr[0] != 0:
+                num = self.tree.node_num
+                
+                self.tree = Tree('root',None)
+                self.tree.node_num = num
+                self.tree_grad = Tree('root',None)
+                self.tree_grad.node_num = num
             value_list = []
             state_list = []
             QAOA_diff_list = []
@@ -158,7 +256,7 @@ class RL_QAOA:
             # Update parameters using the Adam optimizer
             update = self.optimzer.get_updates([QAOA_diff_sum, beta_diff_sum])
             self.param += np.array(update[0])
-            self.b += np.reshape(update[1], -1)
+            self.b += np.array(update[1])
             
     def rqaoa_execute(self, cal_grad=True):
         """
@@ -189,10 +287,23 @@ class RL_QAOA:
         beta_diff_list = []
         index = 0
 
+        
+        
+
         while Q_init.shape[0] > self.n_c:
-            edge_expectations = self._qaoa_edge_expectations(
-                Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
-            )
+            if self.b.ndim == 1:
+                self.beta = self.b
+            else:
+                self.beta = self.b[index]
+                
+                
+            if self.tree.state.value is None:
+                edge_expectations = self._qaoa_edge_expectations(
+                    Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
+                )
+                self.tree.state.value = edge_expectations
+            else:
+                edge_expectations = self.tree.state.value
             selected_edge_idx, policy, edge_res = self._select_edge_to_cut(Q_action, Q_init, edge_expectations)
 
             if cal_grad:
@@ -200,21 +311,36 @@ class RL_QAOA:
                     Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)], selected_edge_idx
                 ) """
                 
-                edge_res_grad = self._qaoa_edge_expectations_gradients(
-                    Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
-                )
-                
-                QAOA_diff = self._compute_log_pol_diff(
-                    selected_edge_idx, Q_action, edge_res, edge_res_grad, policy
-                ) * self.gamma ** (Q_init.shape[0] - index)
-                beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
+                if self.tree_grad.state.value is None:
+                    edge_res_grad = self._qaoa_edge_expectations_gradients(
+                        Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
+                    )
+                    self.tree_grad.state.value = edge_res_grad
+                    self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
+                    
+                else:
+                    edge_res_grad = self.tree_grad.state.value
+                    self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
 
+
+
+                if self.lr[0] != 0:
+                    QAOA_diff = self._compute_log_pol_diff(
+                        selected_edge_idx, Q_action, edge_res, edge_res_grad, policy
+                    ) * self.gamma ** (Q_init.shape[0] - index)
+                    
+                else:
+                    QAOA_diff = np.zeros_like(self.param)
+                    
+                beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
                 QAOA_diff_list.append(QAOA_diff)
                 beta_diff_list.append(beta_diff)
 
             Q_init, Q_action = self._cut_edge(selected_edge_idx, edge_res, Q_action, Q_init)
             index += 1
-
+            
+        self.tree.reset_state()
+        self.tree_grad.reset_state()
         # Solve smaller problem using brute force
         self._brute_force_optimal(Q_init)
         Value = self._state_energy(np.array(self.node_assignments), self.Q)
@@ -223,9 +349,23 @@ class RL_QAOA:
         same_list_copy = copy.deepcopy(self.same_list)
         diff_list_copy = copy.deepcopy(self.diff_list)
 
+        if self.n_c != self.Q.shape[0]:
+            QAOA_diff = np.sum(QAOA_diff_list, axis=0)
+        else:
+            QAOA_diff = None
+        if self.n_c != self.Q.shape[0]:
+            if self.beta.ndim == 1:
+                beta_diff = np.sum(beta_diff_list, axis=0)
+            else:
+                beta_diff = np.stack(beta_diff_list, axis=0)
+        else:
+            beta_diff = None
+
+
+
         # If gradient calculation is enabled, return additional data
         if cal_grad:
-            return np.sum(QAOA_diff_list, axis=0), np.sum(beta_diff_list, axis=0), Value, np.array(self.node_assignments), same_list_copy, diff_list_copy
+            return QAOA_diff, beta_diff, Value, np.array(self.node_assignments), same_list_copy, diff_list_copy
         else:
             return Value
         
@@ -255,7 +395,7 @@ class RL_QAOA:
             value = abs(np.array(edge_expectations))
             
             value = value - np.amax(value)
-            interactions = abs(np.array(edge_expectations)) * self.b[action_space]
+            interactions = abs(np.array(edge_expectations)) * self.beta[action_space]
             interactions -= np.amax(interactions)
         except:
             print(abs(np.array(edge_expectations)), self.b[action_space])
@@ -293,7 +433,7 @@ class RL_QAOA:
             The computed gradient of the log-policy.
         """
         action_space = self._action_space(Q_action)
-        betas = self.b[action_space]
+        betas = self.beta[action_space]
         gather = np.zeros_like(policy)
 
         # Compute the weighted sum of policy and betas
@@ -336,7 +476,7 @@ class RL_QAOA:
             The computed gradient of the log-policy for the selected edge.
         """
         action_space = self._action_space(Q_action)
-        betas = self.b[action_space]
+        betas = self.beta[action_space]
 
         diff_log_pol = betas[idx] * np.sign(edge_expectations[idx]) * grad - policy[idx] * betas[idx] * np.sign(edge_expectations[idx]) * grad
         return np.array(diff_log_pol)
@@ -368,7 +508,7 @@ class RL_QAOA:
         action_space = self._action_space(Q_action)
 
         betas_idx = action_space
-        grad = np.zeros(len(self.b))
+        grad = np.zeros(len(self.beta))
 
         grad[betas_idx[idx]] += abs_expectations[idx]
 
@@ -423,8 +563,42 @@ class RL_QAOA:
             self.same_list.append((i, j))
         else:
             self.diff_list.append((i, j))
-
+ 
+        self._tree_action(self.tree, expectations, selected_edge_idx, Q_init)
         return new_Q, Q_action
+
+
+    def _tree_action(self,tree, expectations,selected_edge_idx,Q_init):
+        edge_list = [(i, j) for i in range(Q_init.shape[0]) for j in range(Q_init.shape[0]) if Q_init[i, j] != 0 and i != j]
+        edge_to_cut = edge_list[selected_edge_idx]
+        edge_to_cut = sorted(edge_to_cut)
+
+        expectation = expectations[selected_edge_idx]
+
+        i, j = edge_to_cut[0], edge_to_cut[1]
+
+        for key in dict(sorted(self.node_assignments.items(), key=lambda item: item[0])):
+            if i >= key:
+                i += 1
+            if j >= key:
+                j += 1
+        
+        if expectation > 0:
+            self.key = f'({i},{j})'
+            if tree.has_child(self.key):
+                tree.move(self.key)
+
+            else:
+                tree.create(self.key,None)
+                tree.move(self.key)
+        else:
+            self.key = f'({-i},{-j})'
+            if tree.has_child(self.key):
+                tree.move(self.key)
+            else:
+                tree.create(self.key,None)
+                tree.move(self.key)
+        
 
     def _action_space(self, Q_action):
         """

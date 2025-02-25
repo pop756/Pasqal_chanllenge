@@ -99,12 +99,12 @@ class Tree:
         print("  " * level + f"{node.key}: {node.value}")  # Print the current node with indentation
         for child in node.children.values():  # Iterate through all child nodes
             self.display_tree(child, level + 1)  # Recursively print child nodes with increased indentation
-            
-            
+
+
 
 class RL_QAOA:
     """
-    A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm) 
+    A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm)
     for quadratic unconstrained binary optimization (QUBO) problems.
 
     Parameters
@@ -161,7 +161,7 @@ class RL_QAOA:
         self.lr = learning_rate_init
         self.tree = Tree('root',None)
         self.tree_grad = Tree('root',None)
-        
+
     def RL_QAOA(self, episodes, epochs, correct_ans=None):
         self.avg_values = []
         self.min_values = []
@@ -169,7 +169,7 @@ class RL_QAOA:
         self.best_states = []
         self.best_same_lists = []
         self.best_diff_lists = []
-        
+
         """
         Performs the reinforcement learning optimization process with progress tracking.
 
@@ -186,14 +186,15 @@ class RL_QAOA:
         """
 
         for j in range(epochs):
-            
+
             if self.lr[0] != 0:
                 num = self.tree.node_num
-                
+
                 self.tree = Tree('root',None)
                 self.tree.node_num = num
                 self.tree_grad = Tree('root',None)
                 self.tree_grad.node_num = num
+
             value_list = []
             state_list = []
             QAOA_diff_list = []
@@ -257,7 +258,7 @@ class RL_QAOA:
             update = self.optimzer.get_updates([QAOA_diff_sum, beta_diff_sum])
             self.param += np.array(update[0])
             self.b += np.array(update[1])
-            
+
     def rqaoa_execute(self, cal_grad=True):
         """
         Executes the RQAOA algorithm by iteratively reducing the QUBO problem.
@@ -287,16 +288,16 @@ class RL_QAOA:
         beta_diff_list = []
         index = 0
 
-        
-        
+
+
 
         while Q_init.shape[0] > self.n_c:
             if self.b.ndim == 1:
                 self.beta = self.b
             else:
                 self.beta = self.b[index]
-                
-                
+
+
             if self.tree.state.value is None:
                 edge_expectations = self._qaoa_edge_expectations(
                     Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
@@ -310,14 +311,14 @@ class RL_QAOA:
                 """ edge_res_grad = self._qaoa_edge_expectations_gradient(
                     Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)], selected_edge_idx
                 ) """
-                
+
                 if self.tree_grad.state.value is None:
                     edge_res_grad = self._qaoa_edge_expectations_gradients(
                         Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
                     )
                     self.tree_grad.state.value = edge_res_grad
                     self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
-                    
+
                 else:
                     edge_res_grad = self.tree_grad.state.value
                     self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
@@ -328,17 +329,17 @@ class RL_QAOA:
                     QAOA_diff = self._compute_log_pol_diff(
                         selected_edge_idx, Q_action, edge_res, edge_res_grad, policy
                     ) * self.gamma ** (Q_init.shape[0] - index)
-                    
+
                 else:
                     QAOA_diff = np.zeros_like(self.param)
-                    
+
                 beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
                 QAOA_diff_list.append(QAOA_diff)
                 beta_diff_list.append(beta_diff)
 
             Q_init, Q_action = self._cut_edge(selected_edge_idx, edge_res, Q_action, Q_init)
             index += 1
-            
+
         self.tree.reset_state()
         self.tree_grad.reset_state()
         # Solve smaller problem using brute force
@@ -368,7 +369,7 @@ class RL_QAOA:
             return QAOA_diff, beta_diff, Value, np.array(self.node_assignments), same_list_copy, diff_list_copy
         else:
             return Value
-        
+
     def _select_edge_to_cut(self, Q_action, Q_init, edge_expectations):
         """
         Selects an edge to be cut based on a softmax probability distribution over interactions.
@@ -393,7 +394,7 @@ class RL_QAOA:
 
         try:
             value = abs(np.array(edge_expectations))
-            
+
             value = value - np.amax(value)
             interactions = abs(np.array(edge_expectations)) * self.beta[action_space]
             interactions -= np.amax(interactions)
@@ -520,7 +521,7 @@ class RL_QAOA:
 
     def _cut_edge(self, selected_edge_idx, expectations, Q_action, Q_init):
         """
-        Cuts the selected edge and returns the reduced QUBO matrix along with a matrix of the same size 
+        Cuts the selected edge and returns the reduced QUBO matrix along with a matrix of the same size
         where the corresponding node values are set to zero.
 
         Parameters
@@ -563,7 +564,7 @@ class RL_QAOA:
             self.same_list.append((i, j))
         else:
             self.diff_list.append((i, j))
- 
+
         self._tree_action(self.tree, expectations, selected_edge_idx, Q_init)
         return new_Q, Q_action
 
@@ -582,7 +583,7 @@ class RL_QAOA:
                 i += 1
             if j >= key:
                 j += 1
-        
+
         if expectation > 0:
             self.key = f'({i},{j})'
             if tree.has_child(self.key):
@@ -598,15 +599,15 @@ class RL_QAOA:
             else:
                 tree.create(self.key,None)
                 tree.move(self.key)
-        
+
 
     def _action_space(self, Q_action):
         """
         Maps the edges in the reduced graph to their original positions in the full graph.
 
-        This function is used to track which edges in the reduced graph correspond to the original 
-        graph's edges after node elimination. When a node is removed, the edge indices in the 
-        reduced graph will shift, and this function helps maintain consistency with the original 
+        This function is used to track which edges in the reduced graph correspond to the original
+        graph's edges after node elimination. When a node is removed, the edge indices in the
+        reduced graph will shift, and this function helps maintain consistency with the original
         edge indexing.
 
         Example:
@@ -619,7 +620,7 @@ class RL_QAOA:
 
         The reduced graph will renumber nodes as:
             (1,2) -> (1,2), (4,5) -> (2,3)
-        
+
         This function ensures the correct mapping to the original graph using `Q_action`.
 
         Parameters
@@ -630,7 +631,7 @@ class RL_QAOA:
         Returns
         -------
         list
-            A list of indices indicating which edges in the reduced graph correspond to the original 
+            A list of indices indicating which edges in the reduced graph correspond to the original
             graph structure.
         """
         action_space_list = []
@@ -668,8 +669,8 @@ class RL_QAOA:
         def circuit(param):
             self.qaoa_layer.qaoa_circuit(param)
             return [qml.expval(qml.PauliZ(i) @ qml.PauliZ(j))
-                    for i in range(Q.shape[0]) 
-                    for j in range(Q.shape[0]) 
+                    for i in range(Q.shape[0])
+                    for j in range(Q.shape[0])
                     if Q[i, j] != 0 and i != j]
 
         return circuit(self.param[idx])
@@ -858,7 +859,7 @@ def generate_upper_triangular_qubo(size, low=-10, high=10, integer=True, seed=No
     # Ensure diagonal values are positive (bias terms)
     np.fill_diagonal(Q,np.diagonal(Q))
 
-    
+
     return Q
 
 class AdamOptimizer:
@@ -1091,7 +1092,7 @@ class QAOA_layer:
 
 def add_zero_row_col(matrix, m):
     """
-    Adds a new row and column filled with zeros at the specified position 
+    Adds a new row and column filled with zeros at the specified position
     in an n x n matrix, resulting in an (n+1) x (n+1) matrix.
 
     Args:
@@ -1129,7 +1130,7 @@ import pennylane as qml
 
 class QAOA_pretrain:
     """
-    A class to pre-train QAOA parameters by averaging expectation values 
+    A class to pre-train QAOA parameters by averaging expectation values
     over randomly sampled submatrices from the given QUBO matrix.
 
     Parameters
@@ -1149,7 +1150,7 @@ class QAOA_pretrain:
     Methods
     -------
     qaoa_exp(param)
-        Computes the average expectation value of the QAOA circuit over randomly 
+        Computes the average expectation value of the QAOA circuit over randomly
         selected submatrices.
 
     cost_function(params)
@@ -1331,7 +1332,7 @@ def reduce_hamiltonian(J, k, l, node_assignments, sign):
         sign (int): Relationship (1 if identical, -1 if opposite).
 
     Returns:
-        tuple: 
+        tuple:
             - np.array: The reduced Hamiltonian matrix with the k-th variable removed.
             - np.array: An expanded version of the reduced matrix with extra rows and columns added back.
     """
@@ -1342,7 +1343,7 @@ def reduce_hamiltonian(J, k, l, node_assignments, sign):
             J[l, i] += sign * J[k, i]  # Update column
 
     # Update diagonal elements (self-interaction term)
-    J[l, l] = sign * J[k, k] + J[l, l]  
+    J[l, l] = sign * J[k, k] + J[l, l]
 
     # Zero out lower triangular elements to maintain upper triangular form
     J = zero_lower_triangle(J)
@@ -1369,7 +1370,7 @@ def reduce_hamiltonian(J, k, l, node_assignments, sign):
 
 def add_zero_row_col(matrix, m):
     """
-    Adds a new row and column filled with zeros at the specified position 
+    Adds a new row and column filled with zeros at the specified position
     in an n x n matrix, resulting in an (n+1) x (n+1) matrix.
 
     Args:

@@ -692,21 +692,35 @@ class RL_QAOA:
             A list of gradient values for the expectation values of ZZ interactions.
         """
         self.qaoa_layer = QAOA_layer(self.p, Q)
-        res = []
+        cal_index = []
 
         @qml.qnode(self.qaoa_layer.dev)
-        def circuit(params, i, j):
+        def circuit(params, cal_list):
             self.qaoa_layer.qaoa_circuit(params[idx])
-            return qml.expval(qml.PauliZ(i) @ qml.PauliZ(j))
+            return [qml.expval(qml.PauliZ(cal[0]) @ qml.PauliZ(cal[1])) for cal in cal_list]
 
         # Compute gradients for each valid edge
         for i in range(Q.shape[0]):
             for j in range(Q.shape[0]):
                 if Q[i, j] != 0 and i != j:
-                    gradients = qml.grad(circuit)(self.param, i, j)
-                    res.append(gradients)
 
-        return res
+                    cal_index.append((i,j))
+  
+
+
+
+        params = torch.tensor(self.param, requires_grad=True)
+        expectation_values = circuit(params,cal_index)
+        res = []
+        # ✅ 회로 실행 및 결과 저장 (Tensor로 자동 변환됨)
+        for index in range(len(expectation_values)):
+            # ✅ PyTorch의 autograd 기능을 이용한 Gradient 계산
+            expectation_values[index].backward(retain_graph= True)  # 모든 기대값에 대해 기울기 계산
+            grad_values = params.grad.clone()  # 기울기 저장
+            params.grad.zero_()
+            res.append(grad_values)
+        
+        return np.array(res,requires_grad=True)
 
     def _qaoa_edge_expectations_gradient(self, Q, idx, index):
         """

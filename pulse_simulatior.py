@@ -181,8 +181,8 @@ class Pulse_simulation:
       amp_list = []
       detune_list = []
       for i in range(len(self.amplitude)):
-        amp = interp.interp1d(self.x_amp[i], self.amplitude[i], kind="linear", fill_value="extrapolate")
-        detune = interp.interp1d(self.x_detune[i], self.detuning[i], kind="linear", fill_value="extrapolate")
+        amp = interp.PchipInterpolator(self.x_amp[i], self.amplitude[i])
+        detune = interp.PchipInterpolator(self.x_detune[i], self.detuning[i])
         amp_list.append(amp(self.points))
         detune_list.append(detune(self.points))
       return amp_list,detune_list
@@ -194,8 +194,8 @@ class Pulse_simulation:
 
       for i in range(len(self.amplitude)):
           pulse = Pulse(
-              InterpolatedWaveform(self.duration, self.amplitude[i],interpolator='interp1d'),
-              InterpolatedWaveform(self.duration, self.detuning[i],interpolator='interp1d'),
+              InterpolatedWaveform(self.duration, self.amplitude[i]),
+              InterpolatedWaveform(self.duration, self.detuning[i]),
               0,
           )
           seq_temp.declare_channel(f"ch{i}", "rydberg_local")

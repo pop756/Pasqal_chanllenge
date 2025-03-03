@@ -14,7 +14,7 @@ import itertools
 import torch
 import pennylane as qml
 
-
+from pulse_simulator import ising_to_qubo
 
 
 
@@ -249,6 +249,7 @@ class RL_QAOA:
                 print(f'  Average reward: {value_sum}')
                 print(f'  Lowest reward obtained: {min_value}')
                 print(f'  Best state at lowest value: {self.best_states[-1]}')
+                print(f'  number of nodes : {self.tree.node_num}')
                 #print(f'  Top 3 same constraints: {self.best_same_lists[-1]}')
                 #print(f'  Top 3 different constraints: {self.best_diff_lists[-1]}')
 
@@ -562,7 +563,7 @@ class RL_QAOA:
         if expectation > 0:
             self.same_list.append((i, j))
         else:
-            self.diff_list.append((i, j))
+            self.diff_list.append((i, -j))
  
         self._tree_action(self.tree, expectations, selected_edge_idx, Q_init)
         return new_Q, Q_action
@@ -842,7 +843,7 @@ def generate_combinations(n, m):
 
 
 
-def generate_upper_triangular_qubo(size, low=-10, high=10, integer=True, seed=None):
+def generate_upper_triangular_qubo(size, node_weight_range=(-3, 3), edge_weight_range=(-3, 3), integer=True, seed=None):
     """
     Generates an upper-triangular QUBO (Quadratic Unconstrained Binary Optimization) matrix.
 
@@ -861,16 +862,16 @@ def generate_upper_triangular_qubo(size, low=-10, high=10, integer=True, seed=No
 
     # Generate random values for the upper triangular part including diagonal
     if integer:
-        Q = np.random.randint(low, high, (size, size))
+        Q = np.random.randint(edge_weight_range[0], edge_weight_range[1], (size, size))
     else:
-        Q = np.random.uniform(low, high, (size, size))
+        Q = np.random.uniform(edge_weight_range[0], edge_weight_range[1], (size, size))
 
     # Keep only the upper triangle values (including diagonal), set lower triangle to zero
     Q = np.triu(Q)
 
 
     # Ensure diagonal values are positive (bias terms)
-    np.fill_diagonal(Q,np.diagonal(Q))
+    np.fill_diagonal(Q,np.random.uniform(node_weight_range[0], node_weight_range[1], size))
 
     
     return Q
@@ -1350,36 +1351,38 @@ def reduce_hamiltonian(J, k, l, node_assignments, sign):
             - np.array: An expanded version of the reduced matrix with extra rows and columns added back.
     """
     # Update interactions: J[i, l] = J[i, l] + sign * J[i, k]
+    J_res = copy.deepcopy(J)
+    
     for i in range(J.shape[0]):
         if i != k and i != l:
-            J[i, l] += sign * J[i, k]  # Update row
-            J[l, i] += sign * J[k, i]  # Update column
+            J_res[i, l] += sign * J_res[i, k]  # Update row
+            J_res[l, i] += sign * J_res[k, i]  # Update column
 
     # Update diagonal elements (self-interaction term)
-    J[l, l] = sign * J[k, k] + J[l, l]  
+    J_res[l, l] = sign * J_res[k, k] + J_res[l, l]  
 
     # Zero out lower triangular elements to maintain upper triangular form
-    J = zero_lower_triangle(J)
+    J_res = zero_lower_triangle(J_res)
 
     # Sort keys for correct row/column addition
     key_list = sorted(node_assignments.keys())
 
     # Set the removed row and column to zero before deletion
-    J[:, k] = 0
-    J[k, :] = 0
+    J_res[:, k] = 0
+    J_res[k, :] = 0
 
     # Remove the k-th row and column
-    J = np.delete(J, k, axis=0)
-    J = np.delete(J, k, axis=1)
+    J_res = np.delete(J_res, k, axis=0)
+    J_res = np.delete(J_res, k, axis=1)
 
     # Create a copy for expansion
-    R = copy.deepcopy(J)
+    R = copy.deepcopy(J_res)
 
     # Add back zero rows and columns at specified indices
     for key in key_list:
         R = add_zero_row_col(R, key)
 
-    return J, R
+    return J_res, R
 
 def add_zero_row_col(matrix, m):
     """
@@ -1525,3 +1528,597 @@ def get_case(same_list, diff_list, node_number):
 
     return result_list
 
+def Q_to_QAA(Q):
+    Q_copy = copy.deepcopy(Q)
+    Q_copy = (Q_copy+Q_copy.T)/2
+    value = np.median(Q_copy[~np.eye(Q_copy.shape[0], dtype=bool)])/2
+    Q_copy = Q_copy/value*5
+    return Q_copy
+
+from pulse_simulator import Pulse_simulation_fixed
+class RL_QAA:
+    """
+    A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm) 
+    for quadratic unconstrained binary optimization (QUBO) problems.
+
+    Parameters
+    ----------
+    Q : np.ndarray
+        QUBO matrix representing the optimization problem.
+
+    n_c : int
+        The threshold number of nodes at which classical brute-force optimization is applied.
+
+    init_paramter : np.ndarray
+        Initial parameters for the QAOA circuit.
+
+    b_vector : np.ndarray
+        The beta vector used in reinforcement learning to guide edge selection.
+
+    QAOA_depth : int
+        Depth of the QAOA circuit, representing the number of layers.
+
+    gamma : float, default=0.99
+        Discount factor used in reinforcement learning.
+
+    learning_rate_init : float, default=0.001
+        Initial learning rate for the Adam optimizer.
+
+    Attributes
+    ----------
+    qaoa_layer : QAOA_layer
+        Instance of the QAOA layer with specified depth and QUBO matrix.
+
+    optimizer : AdamOptimizer
+        Adam optimizer instance to optimize QAOA parameters.
+
+    same_list : list
+        List of edges that should have the same value.
+
+    diff_list : list
+        List of edges that should have different values.
+
+    node_assignments : dict
+        Tracks assigned values to the nodes.
+
+    """
+
+    def __init__(self, Q, n_c, b_vector, gamma=0.99, learning_rate_init=0.05):
+        self.Q = Q
+        self.n_c = n_c
+        self.b = b_vector
+        self.pulse = Pulse_simulation_fixed(Q_to_QAA(Q))
+        self.gamma = gamma
+        self.optimzer = AdamOptimizer([np.array([0.,0]), b_vector], learning_rate_init=[0,learning_rate_init])
+        self.lr = [0,learning_rate_init]
+        self.tree = Tree('root',None)
+        self.tree_grad = Tree('root',None)
+        self.param = np.array([0.,0])
+    def RL_QAOA(self, episodes, epochs, correct_ans=None):
+        self.avg_values = []
+        self.min_values = []
+        self.prob_values = []
+        self.best_states = []
+        self.best_same_lists = []
+        self.best_diff_lists = []
+        
+        """
+        Performs the reinforcement learning optimization process with progress tracking.
+
+        Parameters
+        ----------
+        episodes : int
+            Number of Monte Carlo trials for the optimization.
+
+        epochs : int
+            Number of optimization iterations to update parameters.
+
+        correct_ans : float, optional
+            The correct optimal solution (if available) to calculate success probability.
+        """
+
+        for j in range(epochs):
+            
+            if self.lr[0] != 0:
+                num = self.tree.node_num
+                self.tree = Tree('root',None)
+                self.tree.node_num = num
+                self.tree_grad = Tree('root',None)
+                self.tree_grad.node_num = num
+            value_list = []
+            state_list = []
+            QAOA_diff_list = []
+            beta_diff_list = []
+            same_lists = []
+            diff_lists = []
+
+            if correct_ans is not None:
+                prob = 0
+
+            # Progress bar for episodes within the current epoch
+            for i in tqdm(range(episodes), desc=f'Epoch {j + 1}/{epochs}', unit=' episode'):
+                QAOA_diff, beta_diff, value, final_state, same_list, diff_list = self.rqaoa_execute()
+                value_list.append(value)
+                state_list.append(final_state)
+                same_lists.append(same_list)
+                diff_lists.append(diff_list)
+                QAOA_diff_list.append(QAOA_diff)
+                beta_diff_list.append(beta_diff)
+
+                if correct_ans is not None and correct_ans - 0.01 <= value <= correct_ans + 0.01:
+                    prob += 1
+
+            # Compute softmax rewards and normalize
+
+            batch_mean = (np.array(value_list) - np.mean(value_list))
+            #batch_plus = np.where(batch_mean < 0, batch_mean, 0)
+            #softmaxed_rewards = signed_softmax_rewards(batch_plus, beta=15)*episodes
+            for index, val in enumerate(batch_mean):
+                QAOA_diff_list[index] *= 0
+                beta_diff_list[index] *= -batch_mean[index]
+
+            # Compute parameter updates
+            QAOA_diff_sum = np.mean(QAOA_diff_list, axis=0)
+            beta_diff_sum = np.mean(beta_diff_list, axis=0)
+            value_sum = np.mean(value_list)
+            min_value = np.min(value_list)  # Find the lowest reward value
+            min_index = np.argmin(value_list)  # Index of lowest reward value
+            # Store values
+            self.avg_values.append(value_sum)
+            self.min_values.append(min_value)
+            if correct_ans is not None:
+                prob /= episodes
+            self.prob_values.append(prob)
+            self.best_states.append(state_list[min_index])
+            self.best_same_lists.append(same_lists[min_index][:3])  # Store top 3 same list elements
+            self.best_diff_lists.append(diff_lists[min_index][:3])  # Store top 3 diff list elements
+
+            # Print optimization progress
+            if j % 5 == 0:
+                if correct_ans is not None:
+                    print(f'  Probability of finding correct solution: {prob:.4f}')
+                print(f'  Average reward: {value_sum}')
+                print(f'  Lowest reward obtained: {min_value}')
+                print(f'  Best state at lowest value: {self.best_states[-1]}')
+                print(f' number of tree : {self.tree.node_num}')
+                #print(f'  Top 3 same constraints: {self.best_same_lists[-1]}')
+                #print(f'  Top 3 different constraints: {self.best_diff_lists[-1]}')
+
+
+            # Update parameters using the Adam optimizer
+            update = self.optimzer.get_updates([QAOA_diff_sum, beta_diff_sum])
+            self.param += np.array(update[0])
+            self.b += np.array(update[1])
+            
+    def rqaoa_execute(self, cal_grad=True):
+        """
+        Executes the RQAOA algorithm by iteratively reducing the QUBO problem.
+
+        Parameters
+        ----------
+        cal_grad : bool, default=True
+            Whether to calculate the gradient.
+
+        Returns
+        -------
+        tuple or float
+            If cal_grad is True, returns gradients, value, and final state.
+            Otherwise, returns only the final value.
+        """
+
+        Q_init = copy.deepcopy(self.Q)
+        Q_action = copy.deepcopy(self.Q)
+        self.same_list = []
+        self.diff_list = []
+        self.node_assignments = {}
+        self.edge_expectations = []
+        self.edge_expectations_grad = []
+        self.policys = []
+
+        QAOA_diff_list = []
+        beta_diff_list = []
+        index = 0
+
+        
+        
+
+        while Q_init.shape[0] > self.n_c:
+            if self.b.ndim == 1:
+                self.beta = self.b
+            else:
+                self.beta = self.b[index]
+                
+                
+            if self.tree.state.value is None:
+                edge_expectations = self._qaoa_edge_expectations(
+                    Q_init
+                )
+                self.tree.state.value = edge_expectations
+            else:
+                edge_expectations = self.tree.state.value
+            selected_edge_idx, policy, edge_res = self._select_edge_to_cut(Q_action, Q_init, edge_expectations)
+
+            if cal_grad:
+                """ edge_res_grad = self._qaoa_edge_expectations_gradient(
+                    Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)], selected_edge_idx
+                ) """
+                
+                if self.lr[0] != 0:
+                    if self.tree_grad.state.value is None:
+                            edge_res_grad = self._qaoa_edge_expectations_gradients(
+                                Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
+                            )
+                            self.tree_grad.state.value = edge_res_grad
+                            self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
+                        
+                    else:
+                        edge_res_grad = self.tree_grad.state.value
+                        self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
+                else:
+                    pass
+
+
+                if self.lr[0] != 0:
+                    QAOA_diff = self._compute_log_pol_diff(
+                        selected_edge_idx, Q_action, edge_res, edge_res_grad, policy
+                    ) * self.gamma ** (Q_init.shape[0] - index)
+                    
+                else:
+                    QAOA_diff = np.zeros_like(self.param)
+                    
+                beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
+                QAOA_diff_list.append(QAOA_diff)
+                beta_diff_list.append(beta_diff)
+
+            Q_init, Q_action = self._cut_edge(selected_edge_idx, edge_res, Q_action, Q_init)
+            index += 1
+            
+        self.tree.reset_state()
+        self.tree_grad.reset_state()
+        # Solve smaller problem using brute force
+        self._brute_force_optimal(Q_init)
+        Value = self._state_energy(np.array(self.node_assignments), self.Q)
+
+        # Copy lists to preserve their state
+        same_list_copy = copy.deepcopy(self.same_list)
+        diff_list_copy = copy.deepcopy(self.diff_list)
+
+        if self.n_c != self.Q.shape[0]:
+            QAOA_diff = np.sum(QAOA_diff_list, axis=0)
+        else:
+            QAOA_diff = None
+        if self.n_c != self.Q.shape[0]:
+            if self.beta.ndim == 1:
+                beta_diff = np.sum(beta_diff_list, axis=0)
+            else:
+                beta_diff = np.stack(beta_diff_list, axis=0)
+        else:
+            beta_diff = None
+
+        # If gradient calculation is enabled, return additional data
+        if cal_grad:
+            return QAOA_diff, beta_diff, Value, np.array(self.node_assignments), same_list_copy, diff_list_copy
+        else:
+            return Value
+        
+    def _select_edge_to_cut(self, Q_action, Q_init, edge_expectations):
+        """
+        Selects an edge to be cut based on a softmax probability distribution over interactions.
+
+        Parameters
+        ----------
+        Q_action : np.ndarray
+            Current QUBO matrix tracking active nodes.
+
+        Q_init : np.ndarray
+            Initial QUBO matrix.
+
+        edge_expectations : list
+            Expectation values of ZZ interactions for all edges.
+
+        Returns
+        -------
+        tuple
+            Index of selected edge, probability distribution, expectation values.
+        """
+        action_space = self._action_space(Q_action)
+
+        try:
+            value = abs(np.array(edge_expectations))
+            
+            value = value - np.amax(value)
+            interactions = abs(np.array(edge_expectations)) * self.beta[action_space]
+            interactions -= np.amax(interactions)
+        except:
+            print(abs(np.array(edge_expectations)), self.b[action_space])
+            raise ValueError("Invalid input", action_space, abs(np.array(edge_expectations)))
+        interactions = np.exp(interactions)
+        probabilities = interactions/np.sum(interactions)
+        #probabilities = torch.softmax(torch.tensor(interactions), dim=0).numpy()
+        selected_edge_idx = np.random.choice(len(probabilities), p=probabilities)
+
+        return selected_edge_idx, probabilities, edge_expectations
+
+    def _compute_grad_beta(self, idx, Q_action, policy, edge_expectations):
+        """
+        Computes the gradient of the beta parameter.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the selected edge.
+
+        Q_action : np.ndarray
+            QUBO matrix representing the current optimization problem.
+
+        policy : list
+            Probability distribution over edges for selection.
+
+        edge_expectations : list
+            Expectation values of ZZ interactions for all edges.
+
+        Returns
+        -------
+        np.array
+            The computed gradient of the beta parameter.
+        """
+        abs_expectations = abs(np.array(edge_expectations))
+        action_space = self._action_space(Q_action)
+
+        betas_idx = action_space
+        grad = np.zeros(len(self.beta))
+
+        grad[betas_idx[idx]] += abs_expectations[idx]
+
+        # Compute gradient by adjusting with policy values
+        for i in range(len(action_space)):
+            grad[betas_idx[i]] -= policy[i] * abs_expectations[i]
+
+        return np.array(grad)
+
+    def is_ising(self,Q):
+        
+        Q_copy = copy.deepcopy(Q)
+        Q_copy = (Q_copy+Q_copy.T)/2
+        Q_copy = ising_to_qubo(Q_copy)
+        for i in range(Q_copy.shape[0]):
+            for j in range(Q_copy.shape[1]):
+                if i ==j:
+                    if Q_copy[i,j] > 0:
+                        print('diagonal element is not negative')
+                        print(Q_copy)
+                        return False
+                else:
+                    if Q_copy[i,j] < 0:
+                        print('off-diagonal element is not positive')
+                        print(Q_copy)
+                        return False
+        return True
+    
+    
+    def _cut_edge(self, selected_edge_idx, expectations, Q_action, Q_init):
+        """
+        Cuts the selected edge and returns the reduced QUBO matrix along with a matrix of the same size 
+        where the corresponding node values are set to zero.
+
+        Parameters
+        ----------
+        selected_edge_idx : int
+            Index of the selected edge to be cut.
+
+        expectations : list
+            Expectation values of ZZ interactions for all edges.
+
+        Q_action : np.ndarray
+            Current QUBO matrix tracking active nodes.
+
+        Q_init : np.ndarray
+            Initial QUBO matrix.
+
+        Returns
+        -------
+        tuple
+            Reduced QUBO matrix and an updated QUBO matrix with the selected nodes set to zero.
+        """
+        edge_list = [(i, j) for i in range(Q_init.shape[0]) for j in range(Q_init.shape[0]) if Q_init[i, j] != 0 and i != j]
+        edge_to_cut = edge_list[selected_edge_idx]
+        edge_to_cut = sorted(edge_to_cut)
+
+        expectation = expectations[selected_edge_idx]
+
+        i, j = edge_to_cut[0], edge_to_cut[1]
+
+        for key in dict(sorted(self.node_assignments.items(), key=lambda item: item[0])):
+            if i >= key:
+                i += 1
+            if j >= key:
+                j += 1
+
+        self.node_assignments[i] = 1
+
+        new_Q, Q_action = reduce_hamiltonian(Q_init, edge_to_cut[0], edge_to_cut[1], self.node_assignments, int(np.sign(expectation)))
+        print(new_Q)
+        if self.is_ising(new_Q):
+            pass
+        else:
+            new_Q, Q_action = reduce_hamiltonian(Q_init, edge_to_cut[1], edge_to_cut[0], self.node_assignments, int(np.sign(expectation)))
+            if self.is_ising(new_Q):
+                pass
+            else:
+                print('both constraction have failed')
+        
+        
+        
+        if expectation > 0:
+            self.same_list.append((i, j))
+        else:
+            self.diff_list.append((i, j))
+ 
+        self._tree_action(self.tree, expectations, selected_edge_idx, Q_init)
+        return new_Q, Q_action
+
+
+    def _tree_action(self,tree, expectations,selected_edge_idx,Q_init):
+        edge_list = [(i, j) for i in range(Q_init.shape[0]) for j in range(Q_init.shape[0]) if Q_init[i, j] != 0 and i != j]
+        edge_to_cut = edge_list[selected_edge_idx]
+        edge_to_cut = sorted(edge_to_cut)
+
+        expectation = expectations[selected_edge_idx]
+
+        i, j = edge_to_cut[0], edge_to_cut[1]
+
+        for key in dict(sorted(self.node_assignments.items(), key=lambda item: item[0])):
+            if i >= key:
+                i += 1
+            if j >= key:
+                j += 1
+        
+        if expectation > 0:
+            self.key = f'({i},{j})'
+            if tree.has_child(self.key):
+                tree.move(self.key)
+
+            else:
+                tree.create(self.key,None)
+                tree.move(self.key)
+        else:
+            self.key = f'({-i},{-j})'
+            if tree.has_child(self.key):
+                tree.move(self.key)
+            else:
+                tree.create(self.key,None)
+                tree.move(self.key)
+        
+
+    def _action_space(self, Q_action):
+        """
+        Maps the edges in the reduced graph to their original positions in the full graph.
+
+        This function is used to track which edges in the reduced graph correspond to the original 
+        graph's edges after node elimination. When a node is removed, the edge indices in the 
+        reduced graph will shift, and this function helps maintain consistency with the original 
+        edge indexing.
+
+        Example:
+        --------
+        Suppose the original graph has nodes [1, 2, 3, 4, 5] with edges:
+            (1,2), (2,3), (3,4), (4,5)
+
+        If node 3 is removed, the reduced graph has edges:
+            (1,2), (4,5)
+
+        The reduced graph will renumber nodes as:
+            (1,2) -> (1,2), (4,5) -> (2,3)
+        
+        This function ensures the correct mapping to the original graph using `Q_action`.
+
+        Parameters
+        ----------
+        Q_action : np.ndarray
+            The original QUBO matrix with node elimination information, used to track active nodes.
+
+        Returns
+        -------
+        list
+            A list of indices indicating which edges in the reduced graph correspond to the original 
+            graph structure.
+        """
+        action_space_list = []
+        index = 0  # Tracks the original edge indices
+
+        for i in range(Q_action.shape[0]):
+            for j in range(Q_action.shape[0]):
+                if i != j:  # Avoid self-loops
+                    if Q_action[i, j] != 0:  # Check if the edge exists in the original graph
+                        action_space_list.append(index)  # Store the original edge index
+                    index += 1  # Increment index for original edge mapping
+
+        return action_space_list
+
+    def _qaoa_edge_expectations(self, Q):
+        """
+        Computes the expectation values of ZZ interactions for each edge in the given QUBO matrix.
+
+        Parameters
+        ----------
+        Q : np.ndarray
+            The QUBO matrix representing the optimization problem.
+
+        idx : int
+            Index for selecting the QAOA parameters.
+
+        Returns
+        -------
+        list
+            A list of expectation values for ZZ interactions of the edges in the QUBO matrix.
+        """
+        self.pulse = Pulse_simulation_fixed(Q_to_QAA(ising_to_qubo(Q)))
+        dev = qml.device("default.qubit", wires=Q.shape[0])
+        @qml.qnode(dev)
+        def circuit():
+            self.pulse.simulate_time_evolution()
+            return [qml.expval(qml.PauliZ(i) @ qml.PauliZ(j))
+                    for i in range(Q.shape[0]) 
+                    for j in range(Q.shape[0]) 
+                    if Q[i, j] != 0 and i != j]
+
+        return circuit()
+
+    def _brute_force_optimal(self, Q):
+        """
+        Finds the optimal solution using brute force when the graph size is small.
+
+        Parameters
+        ----------
+        Q : np.ndarray
+            The reduced QUBO matrix.
+
+        Updates
+        -------
+        self.node_assignments : dict
+            Stores the optimal node assignments obtained through brute-force search.
+        """
+        n = self.Q.shape[0]
+        configs = list(itertools.product([-1, 1], repeat=n))
+        best_value = np.inf
+        res_node = None
+
+        # Find all valid combinations considering the same and different constraints
+        comb_list = get_case(self.same_list, self.diff_list,n)
+
+        for comb in comb_list:
+            value = self._state_energy(np.array(comb), self.Q)
+            if value < best_value:
+                best_value = value
+                res_node = copy.copy(comb)
+
+        # Store the optimal assignment
+        self.node_assignments = res_node
+
+    def _state_energy(self, state, Q):
+        """
+        Computes the energy of a given state based on the QUBO matrix.
+
+        Parameters
+        ----------
+        state : np.ndarray
+            Binary state vector (e.g. [-1, 1, -1, 1]).
+
+        Q : np.ndarray
+            The QUBO matrix representing the optimization problem.
+
+        Returns
+        -------
+        float
+            The computed energy value of the given state.
+        """
+        # Create an identity matrix of the same size
+        identity_matrix = np.eye(Q.shape[0], dtype=bool)
+
+        # Remove diagonal elements from the QUBO matrix to isolate interactions
+        interaction = np.where(identity_matrix, 0, Q)
+        diagonal_elements = np.diag(Q)
+
+        # Compute the energy using the QUBO formulation
+        value = diagonal_elements @ state + state.T @ interaction @ state
+        return value

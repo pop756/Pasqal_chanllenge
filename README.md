@@ -4,10 +4,10 @@ Welcome to the **Pasqal Challenge** simulation code page.
 
 ---
 
-## **Quantum Adiabatic Algorithm (RL QAA) for Constraint QUBO Problems**
+## **Reinforcement learning Quantum Adiabatic Algorithm (RL QAA) for Constraint QUBO Problems**
 
 ### **Why RL QAA?**
-Reinforcement Learning-assisted **Quantum Adiabatic Algorithm (RL QAA)** is an enhanced method for solving constraint-based QUBO problems.  
+Reinforcement Learning-assisted **Reinforcement learning Quantum Adiabatic Algorithm (RL QAA)** is an enhanced method for solving constraint-based QUBO problems.  
 While **RL QAOA** has been widely used for combinatorial optimization, we observed **severe limitations** when applying it to **portfolio optimization**,  
 which involves **constraint QUBO problems**.
 

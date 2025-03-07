@@ -1,20 +1,12 @@
-import pennylane as qml  # Importing PennyLane for quantum computing
-from pennylane import numpy as np  # Importing PennyLane's NumPy for compatibility
-import torch  # Importing PyTorch for potential machine learning applications
-import torch.nn as nn  # Importing PyTorch's neural network module
-import copy  # Importing copy module for deep copying objects
-import itertools  # Importing itertools for combinatorial operations
-from tqdm import tqdm  # Importing tqdm for progress tracking
+import pennylane as qml  
+from pennylane import numpy as np 
+import torch  
+import copy  
+from tqdm import tqdm  
 from scipy.optimize import minimize
-import random
-import pennylane as qml
-import numpy as npo
-import copy
-import itertools
 import torch
-import pennylane as qml
-from modules.data_process import Tree,make_node_weights,make_check,off_diagonal_median,zero_lower_triangle,ising_to_qubo,qubo_to_ising,plot_rl_qaoa_results, add_constraint
-
+from modules.data_process import Tree,off_diagonal_median,zero_lower_triangle,ising_to_qubo,qubo_to_ising,plot_rl_qaoa_results
+from modules.pulse_simulator import Pulse_simulation_fixed
             
             
 class RL_QAOA:
@@ -457,6 +449,18 @@ class RL_QAOA:
 
 
     def _tree_action(self,tree, expectations,selected_edge_idx,Q_init):
+        """
+        Manages tree-based memoization to avoid redundant quantum computations.
+        
+        This function ensures that if a previously computed quantum state is encountered again,
+        the stored result is used instead of recomputing via quantum circuits.
+        
+        Args:
+            tree (Tree): Tree structure storing previously computed states.
+            expectations (list): Expectation values for edges.
+            selected_edge_idx (int): Index of the edge selected for reduction.
+            Q_init (np.ndarray): Initial QUBO matrix before reduction.
+        """
         edge_list = [(i, j) for i in range(Q_init.shape[0]) for j in range(Q_init.shape[0]) if Q_init[i, j] != 0 and i != j]
         edge_to_cut = edge_list[selected_edge_idx]
         edge_to_cut = sorted(edge_to_cut)
@@ -672,12 +676,15 @@ class RL_QAOA:
         plot_rl_qaoa_results(self.avg_values,self.min_values,self.prob_values,lable=title)
 
 
-from modules.pulse_simulator import Pulse_simulation_fixed
+
 class RL_QAA(RL_QAOA):
     """
-    A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm) 
-    for quadratic unconstrained binary optimization (QUBO) problems.
-
+    A reinforcement learning-based approach for Quantum Annealing Approximation (QAA) 
+    to solve quadratic unconstrained binary optimization (QUBO) problems.
+    
+    Unlike RL_QAOA, RL_QAA uses an annealing-based reinforcement learning strategy, 
+    and does not require initial QAOA parameters.
+    
     Parameters
     ----------
     Q : np.ndarray
@@ -686,38 +693,31 @@ class RL_QAA(RL_QAOA):
     n_c : int
         The threshold number of nodes at which classical brute-force optimization is applied.
 
-    init_paramter : np.ndarray
-        Initial parameters for the QAOA circuit.
-
     b_vector : np.ndarray
         The beta vector used in reinforcement learning to guide edge selection.
-
-    QAOA_depth : int
-        Depth of the QAOA circuit, representing the number of layers.
 
     gamma : float, default=0.99
         Discount factor used in reinforcement learning.
 
-    learning_rate_init : float, default=0.001
+    learning_rate_init : float, default=0.05
         Initial learning rate for the Adam optimizer.
 
     Attributes
     ----------
-    qaoa_layer : QAOA_layer
-        Instance of the QAOA layer with specified depth and QUBO matrix.
-
+    pulse : PulseSimulationFixed
+        Pulse simulation object used for quantum annealing.
+    
     optimizer : AdamOptimizer
-        Adam optimizer instance to optimize QAOA parameters.
-
-    same_list : list
-        List of edges that should have the same value.
-
-    diff_list : list
-        List of edges that should have different values.
-
-    node_assignments : dict
-        Tracks assigned values to the nodes.
-
+        Adam optimizer instance to optimize QAA parameters.
+    
+    tree : Tree
+        Tree data structure to store computation history and avoid redundant calculations.
+    
+    tree_grad : Tree
+        Tree data structure for tracking gradient updates.
+    
+    param : np.ndarray
+        Parameters for QAA optimization, initialized as [0., 0.].
     """
 
     def __init__(self, qubo, n_c, b_vector, gamma=0.99, learning_rate_init=0.05):
@@ -807,7 +807,7 @@ class RL_QAA(RL_QAOA):
         else:
             QAOA_diff = None
         if self.n_c != self.Q.shape[0]:
-            if self.beta.ndim == 1:
+            if self.b.ndim == 1:
                 beta_diff = np.sum(beta_diff_list, axis=0)
             else:
                 beta_diff = np.stack(beta_diff_list, axis=0)
@@ -836,677 +836,6 @@ class RL_QAA(RL_QAOA):
             A list of expectation values for ZZ interactions of the edges in the QUBO matrix.
         """
         self.pulse = Pulse_simulation_fixed(ising_to_qubo(Q))
-        dev = qml.device("default.qubit", wires=Q.shape[0])
-        @qml.qnode(dev)
-        def circuit():
-            self.pulse.simulate_time_evolution()
-            return [qml.expval(qml.PauliZ(i) @ qml.PauliZ(j))
-                    for i in range(Q.shape[0]) 
-                    for j in range(Q.shape[0]) 
-                    if Q[i, j] != 0 and i != j]
-
-        return circuit()
-
-    def plot_result(self,title = 'RL QAA'):
-        plot_rl_qaoa_results(self.avg_values,self.min_values,self.prob_values,lable=title)
-
-
-class RL_QAOA_constraint(RL_QAOA):
-    """
-    A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm) 
-    for quadratic unconstrained binary optimization (QUBO) problems.
-
-    Parameters
-    ----------
-    Q : np.ndarray
-        QUBO matrix representing the optimization problem.
-
-    n_c : int
-        The threshold number of nodes at which classical brute-force optimization is applied.
-
-    init_paramter : np.ndarray
-        Initial parameters for the QAOA circuit.
-
-    b_vector : np.ndarray
-        The beta vector used in reinforcement learning to guide edge selection.
-
-    QAOA_depth : int
-        Depth of the QAOA circuit, representing the number of layers.
-
-    gamma : float, default=0.99
-        Discount factor used in reinforcement learning.
-
-    learning_rate_init : float, default=0.001
-        Initial learning rate for the Adam optimizer.
-
-    Attributes
-    ----------
-    qaoa_layer : QAOA_layer
-        Instance of the QAOA layer with specified depth and QUBO matrix.
-
-    optimizer : AdamOptimizer
-        Adam optimizer instance to optimize QAOA parameters.
-
-    same_list : list
-        List of edges that should have the same value.
-
-    diff_list : list
-        List of edges that should have different values.
-
-    node_assignments : dict
-        Tracks assigned values to the nodes.
-
-    """
-
-    def __init__(self, qubo, n_c, init_paramter, b_vector, QAOA_depth,hamming_weight,penalty=5, gamma=0.99, learning_rate_init=[0.01,0.05]):
-        Q = zero_lower_triangle(qubo_to_ising(qubo))
-        self.Q = Q
-        self.n_c = n_c
-        self.param = init_paramter
-        self.b = b_vector
-        self.p = QAOA_depth
-        self.qaoa_layer = QAOA_layer(QAOA_depth, Q)
-        self.gamma = gamma
-        self.optimzer = AdamOptimizer([init_paramter, b_vector], learning_rate_init=learning_rate_init)
-        self.lr = learning_rate_init
-        self.tree = Tree('root',None)
-        self.tree_grad = Tree('root',None)
-        self.hamming_weight = hamming_weight
-        self.penalty = penalty
-        self.qubo = qubo
-
-    def RL_QAOA(self, episodes, epochs,log_interval =5, correct_ans=None):
-        self.avg_values = []
-        self.min_values = []
-        self.prob_values = []
-        self.best_states = []
-        self.best_same_lists = []
-        self.best_diff_lists = []
-        
-        """
-        Performs the reinforcement learning optimization process with progress tracking.
-
-        Parameters
-        ----------
-        episodes : int
-            Number of Monte Carlo trials for the optimization.
-
-        epochs : int
-            Number of optimization iterations to update parameters.
-
-        correct_ans : float, optional
-            The correct optimal solution (if available) to calculate success probability.
-        """
-
-        for j in range(epochs):
-            
-            if self.lr[0] != 0:
-                num = self.tree.node_num
-                
-                self.tree = Tree('root',None)
-                self.tree.node_num = num
-                self.tree_grad = Tree('root',None)
-                self.tree_grad.node_num = num
-            value_list = []
-            state_list = []
-            QAOA_diff_list = []
-            beta_diff_list = []
-            same_lists = []
-            diff_lists = []
-            pass_num = 0
-            if correct_ans is not None:
-                prob = 0
-                prob_aproximate = 0
-
-            # Progress bar for episodes within the current epoch
-            for i in tqdm(range(episodes), desc=f'Epoch {j + 1}/{epochs}', unit=' episode'):
-                res = self.rqaoa_execute()
-                if self.const == True:
-                    QAOA_diff, beta_diff, value, final_state, same_list, diff_list = res
-                    if self.qubo is None:
-                        value = self._state_energy(np.array(final_state), self.Q)
-                    value_list.append(value)
-                    state_list.append(final_state)
-                    same_lists.append(same_list)
-                    diff_lists.append(diff_list)
-                    QAOA_diff_list.append(QAOA_diff)
-                    beta_diff_list.append(beta_diff)
-                    pass_num += 1
-                    if correct_ans is not None and correct_ans - abs(correct_ans)*0.001 <= value <= correct_ans + abs(correct_ans)*0.001:
-                        prob_aproximate += 1  
-
-                    if correct_ans is not None and correct_ans - 0.000001 <= value <= correct_ans + 0.000001:
-                        prob += 1  
-                else:
-                    pass
-
-
-
-
-
-            # Compute softmax rewards and normalize
-
-            batch_mean = (np.array(value_list) - np.mean(value_list))
-            #batch_plus = np.where(batch_mean < 0, batch_mean, 0)
-            #softmaxed_rewards = signed_softmax_rewards(batch_plus, beta=15)*episodes
-            for index, val in enumerate(batch_mean):
-                QAOA_diff_list[index] *= -batch_mean[index]
-                beta_diff_list[index] *= -batch_mean[index]
-                #QAOA_diff_list[index] *= value_list[index]
-                #QAOA_diff_list[index] *= value_list[index]
-            # Compute parameter updates
-            QAOA_diff_sum = np.mean(QAOA_diff_list, axis=0)
-            beta_diff_sum = np.mean(beta_diff_list, axis=0)
-            value_sum = np.mean(value_list)
-            min_value = np.min(value_list)  # Find the lowest reward value
-            min_index = np.argmin(value_list)  # Index of lowest reward value
-            # Store values
-            self.avg_values.append(value_sum)
-            self.min_values.append(min_value)
-            if correct_ans is not None:
-                prob /= episodes
-                prob_aproximate /= episodes
-                self.prob_values.append(prob)
-            self.best_states.append(state_list[min_index])
-            self.best_same_lists.append(same_lists[min_index][:3])  # Store top 3 same list elements
-            self.best_diff_lists.append(diff_lists[min_index][:3])  # Store top 3 diff list elements
-
-            # Print optimization progress
-            if j % log_interval == 0:
-                if correct_ans is not None:
-                    print(f'  Probability of finding correct solution: {prob:.4f}')
-                print(f'  Average reward: {value_sum}')
-                print(f'  Lowest reward obtained: {min_value}')
-                print(f'  Best state at lowest value: {self.best_states[-1]}')
-                print(f'  passed episodes : {pass_num}')
-                print(f'  number of nodes : {self.tree.node_num}')
-                print(f'  99.99% solution : {prob_aproximate:.4f}')
-                #print(f'  Top 3 same constraints: {self.best_same_lists[-1]}')
-                #print(f'  Top 3 different constraints: {self.best_diff_lists[-1]}')
-
-
-            # Update parameters using the Adam optimizer
-            self.optimzer.learning_rate = [self.lr[0],self.lr[1]]
-            update = self.optimzer.get_updates([QAOA_diff_sum, beta_diff_sum])
-            self.param += np.array(update[0])
-            self.b += np.array(update[1])
-            #self.optimzer.learning_rate = [self.lr[0]/20*j,self.lr[1]/20*j]
-    def rqaoa_execute(self, cal_grad=True):
-        """
-        Executes the RQAOA algorithm by iteratively reducing the QUBO problem.
-
-        Parameters
-        ----------
-        cal_grad : bool, default=True
-            Whether to calculate the gradient.
-
-        Returns
-        -------
-        tuple or float
-            If cal_grad is True, returns gradients, value, and final state.
-            Otherwise, returns only the final value.
-        """
-        
-    
-
-        Q_init = copy.deepcopy(self.Q)
-        Q_action = copy.deepcopy(self.Q)
-        self.same_list = []
-        self.diff_list = []
-        self.seq = [[i+1] for i in range(self.Q.shape[0])]
-
-        self.node_assignments = {}
-        self.edge_expectations = []
-        self.edge_expectations_grad = []
-        self.policys = []
-        QAOA_diff_list = []
-        beta_diff_list = []
-        index = 0
-
-        
-        
-
-        while Q_init.shape[0] > self.n_c:
-            if self.b.ndim == 1:
-                self.beta = self.b
-            else:
-                self.beta = self.b[index]
-                
-                
-            if self.tree.state.value is None:
-                edge_expectations = self._qaoa_edge_expectations(
-                    Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
-                )
-                self.tree.state.value = edge_expectations
-            else:
-                edge_expectations = self.tree.state.value
-            selected_edge_idx, policy, edge_res = self._select_edge_to_cut(Q_action,edge_expectations)
-
-            if cal_grad:
-                if self.lr[0] != 0:
-                    if self.tree_grad.state.value is None:
-                        edge_res_grad = self._qaoa_edge_expectations_gradients(
-                            Q_init, [i for i in range(self.p * index * 2, self.p * index * 2 + 2 * self.p)]
-                        )
-                        self.tree_grad.state.value = edge_res_grad
-                        self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
-                        
-                    else:
-                        edge_res_grad = self.tree_grad.state.value
-                        self._tree_action(self.tree_grad, edge_expectations,selected_edge_idx,Q_init)
-
-
-
-                    QAOA_diff = self._compute_log_pol_diff(
-                        selected_edge_idx, Q_action, edge_res, edge_res_grad, policy
-                    ) * self.gamma ** (Q_init.shape[0] - index)
-                    
-                else:
-                    QAOA_diff = np.zeros_like(self.param)
-                    
-                beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
-                QAOA_diff_list.append(QAOA_diff)
-                beta_diff_list.append(beta_diff)
-
-            Q_init, Q_action = self._cut_edge(selected_edge_idx, edge_res, Q_action, Q_init)
-            index += 1
-            
-        self.tree.reset_state()
-        self.tree_grad.reset_state()
-        # Solve smaller problem using brute force
-        self.seq = [[i+1] for i in range(self.Q.shape[0])]
-        Value = self._brute_force_optimal()
-        # Copy lists to preserve their state
-        same_list_copy = copy.deepcopy(self.same_list)
-        diff_list_copy = copy.deepcopy(self.diff_list)
-
-        if self.n_c != self.Q.shape[0]:
-            QAOA_diff = np.sum(QAOA_diff_list, axis=0)
-        else:
-            QAOA_diff = None
-        if self.n_c != self.Q.shape[0]:
-            if self.b.ndim == 1:
-                beta_diff = np.sum(beta_diff_list, axis=0)
-            else:
-                beta_diff = np.stack(beta_diff_list, axis=0)
-        else:
-            beta_diff = None
-
-
-        # If gradient calculation is enabled, return additional data
-        if cal_grad:
-            return QAOA_diff, beta_diff, Value, np.array(self.node_assignments), same_list_copy, diff_list_copy
-        else:
-            return Value
-    
-    
-    def _make_constraints(self,Q_init,normalize = True):
-        full_list = make_check(self.seq)
-        
-        while (full_list != make_check(full_list)):
-            full_list = make_check(full_list)
-        
-        node_weights, hamming_weights_default = make_node_weights(full_list)
-
-        Q = add_constraint(node_weights, self.hamming_weight-hamming_weights_default)
-        Q_res = zero_lower_triangle(qubo_to_ising(Q*self.penalty) + Q_init)
-        if normalize:
-            Q_res = zero_lower_triangle(Q_res)/off_diagonal_median(zero_lower_triangle(Q_res)) * 1
-        return Q_res
-    
-    def _cut_edge(self, selected_edge_idx, expectations, Q_action, Q_init):
-        """
-        Cuts the selected edge and returns the reduced QUBO matrix along with a matrix of the same size 
-        where the corresponding node values are set to zero.
-
-        Parameters
-        ----------
-        selected_edge_idx : int
-            Index of the selected edge to be cut.
-
-        expectations : list
-            Expectation values of ZZ interactions for all edges.
-
-        Q_action : np.ndarray
-            Current QUBO matrix tracking active nodes.
-
-        Q_init : np.ndarray
-            Initial QUBO matrix.
-
-        Returns
-        -------
-        tuple
-            Reduced QUBO matrix and an updated QUBO matrix with the selected nodes set to zero.
-        """
-        edge_list = [(i, j) for i in range(Q_init.shape[0]) for j in range(Q_init.shape[0]) if Q_init[i, j] != 0 and i != j]
-        edge_to_cut = edge_list[selected_edge_idx]
-        edge_to_cut = sorted(edge_to_cut)
-
-        expectation = expectations[selected_edge_idx]
-
-        i, j = edge_to_cut[0], edge_to_cut[1]
-
-        for key in dict(sorted(self.node_assignments.items(), key=lambda item: item[0])):
-            if i >= key:
-                i += 1
-            if j >= key:
-                j += 1
-
-        self.node_assignments[i] = 1
-
-        new_Q, Q_action = reduce_hamiltonian(Q_init, edge_to_cut[0], edge_to_cut[1], self.node_assignments, int(np.sign(expectation)))
-        if expectation > 0:
-            self.same_list.append((i, j))
-            self.seq.append([i+1,j+1])
-        else:
-            self.diff_list.append((i, j))
-            self.seq.append([i+1,-(j+1)])
- 
-        self._tree_action(self.tree, expectations, selected_edge_idx, Q_init)
-        return new_Q, Q_action
-
-        
-    def _qaoa_edge_expectations(self, Q, idx):
-        """
-        Computes the expectation values of ZZ interactions for each edge in the given QUBO matrix.
-
-        Parameters
-        ----------
-        Q : np.ndarray
-            The QUBO matrix representing the optimization problem.
-
-        idx : int
-            Index for selecting the QAOA parameters.
-
-        Returns
-        -------
-        list
-            A list of expectation values for ZZ interactions of the edges in the QUBO matrix.
-        """
-        Q_cal = self._make_constraints(Q)
-        self.qaoa_layer = QAOA_layer(self.p, Q_cal)
-
-        @qml.qnode(self.qaoa_layer.dev)
-        def circuit(param):
-            self.qaoa_layer.qaoa_circuit(param)
-            return [qml.expval(qml.PauliZ(i) @ qml.PauliZ(j))
-                    for i in range(Q.shape[0]) 
-                    for j in range(Q.shape[0]) 
-                    if Q[i, j] != 0 and i != j]
-
-
-        return circuit(self.param[idx])
-
-    def _qaoa_edge_expectations_gradients(self, Q, idx):
-        """
-        Computes the gradients of the expectation values of ZZ interactions for each edge.
-
-        Parameters
-        ----------
-        Q : np.ndarray
-            The QUBO matrix representing the optimization problem.
-
-        idx : int
-            Index for selecting the QAOA parameters.
-
-        Returns
-        -------
-        list
-            A list of gradient values for the expectation values of ZZ interactions.
-        """
-        
-        Q_cal = self._make_constraints(Q)
-        self.qaoa_layer = QAOA_layer(self.p, Q_cal)
-        cal_index = []
-
-        @qml.qnode(self.qaoa_layer.dev)
-        def circuit(params, cal_list):
-            self.qaoa_layer.qaoa_circuit(params[idx])
-            return [qml.expval(qml.PauliZ(cal[0]) @ qml.PauliZ(cal[1])) for cal in cal_list]
-
-        # Compute gradients for each valid edge
-        for i in range(Q.shape[0]):
-            for j in range(Q.shape[0]):
-                if Q[i, j] != 0 and i != j:
-                    cal_index.append((i,j))
-  
-
-
-
-        params = torch.tensor(self.param, requires_grad=True)
-        expectation_values = circuit(params,cal_index)
-        res = []
-        for index in range(len(expectation_values)):
-            expectation_values[index].backward(retain_graph= True)  
-            grad_values = params.grad.clone() 
-            params.grad.zero_()
-            res.append(grad_values)
-        return np.array(res,requires_grad=True)
-
-    def _brute_force_optimal(self):
-        """
-        Finds the optimal solution using brute force when the graph size is small.
-
-        Parameters
-        ----------
-        Q : np.ndarray
-            The reduced QUBO matrix.
-
-        Updates
-        -------
-        self.node_assignments : dict
-            Stores the optimal node assignments obtained through brute-force search.
-        """
-        n = self.Q.shape[0]
-        best_value = np.inf
-        res_node = None
-
-        # Find all valid combinations considering the same and different constraints
-        
-        comb_list = get_case(self.same_list, self.diff_list,n)
-        Q_cal = self._make_constraints(self.Q,normalize=False)
-        for comb in comb_list:
-            value = self._state_energy(np.array(comb), Q_cal)
-            if value < best_value:
-                best_value = value
-                res_node = copy.copy(comb)
-
-
-        if self.qubo is not None:
-            #best_value = ((-np.array(res_node)+1)/2)@self.qubo@((-np.array(res_node)+1)/2)
-            if -np.sum((np.array(res_node)-1)/2) != self.hamming_weight:
-                self.const = True
-                self.node_assignments = res_node
-                return best_value
-            # Store the optimal assignment
-            else:
-                self.const = True
-                self.node_assignments = res_node
-                return best_value
-        else:
-            if self.n_c == n:
-                self.node_assignments = res_node
-                return self._state_energy(np.array(res_node), self.Q)
-
-
-            if -np.sum((np.array(res_node)-1)/2) != self.hamming_weight:
-                self.const = False
-                self.node_assignments = res_node
-                return best_value
-            # Store the optimal assignment
-            else:
-                self.const = True
-                self.node_assignments = res_node
-                return best_value
-    def plot_result(self,title = 'RL QAOA const'):
-        plot_rl_qaoa_results(self.avg_values,self.min_values,self.prob_values,lable = title)
-
-
-
-
-class RL_QAA_constraint(RL_QAOA_constraint):
-    """
-    A reinforcement learning-based approach to solving QAOA (Quantum Approximate Optimization Algorithm) 
-    for quadratic unconstrained binary optimization (QUBO) problems.
-
-    Parameters
-    ----------
-    Q : np.ndarray
-        QUBO matrix representing the optimization problem.
-
-    n_c : int
-        The threshold number of nodes at which classical brute-force optimization is applied.
-
-    init_paramter : np.ndarray
-        Initial parameters for the QAOA circuit.
-
-    b_vector : np.ndarray
-        The beta vector used in reinforcement learning to guide edge selection.
-
-    QAOA_depth : int
-        Depth of the QAOA circuit, representing the number of layers.
-
-    gamma : float, default=0.99
-        Discount factor used in reinforcement learning.
-
-    learning_rate_init : float, default=0.001
-        Initial learning rate for the Adam optimizer.
-
-    Attributes
-    ----------
-    qaoa_layer : QAOA_layer
-        Instance of the QAOA layer with specified depth and QUBO matrix.
-
-    optimizer : AdamOptimizer
-        Adam optimizer instance to optimize QAOA parameters.
-
-    same_list : list
-        List of edges that should have the same value.
-
-    diff_list : list
-        List of edges that should have different values.
-
-    node_assignments : dict
-        Tracks assigned values to the nodes.
-
-    """
-
-    def __init__(self, qubo, n_c, b_vector, gamma=0.99, learning_rate_init=0.05):
-        self.Q = zero_lower_triangle(qubo_to_ising(qubo))
-        self.n_c = n_c
-        self.b = b_vector
-        self.pulse = Pulse_simulation_fixed(qubo)
-        self.gamma = gamma
-        self.optimzer = AdamOptimizer([np.array([0.,0]), b_vector], learning_rate_init=[0,learning_rate_init])
-        self.lr = [0,learning_rate_init]
-        self.tree = Tree('root',None)
-        self.tree_grad = Tree('root',None)
-        self.param = np.array([0.,0])
-            
-    def rqaoa_execute(self):
-        """
-        Executes the RQAOA algorithm by iteratively reducing the QUBO problem.
-
-        Parameters
-        ----------
-        cal_grad : bool, default=True
-            Whether to calculate the gradient.
-
-        Returns
-        -------
-        tuple or float
-            If cal_grad is True, returns gradients, value, and final state.
-            Otherwise, returns only the final value.
-        """
-
-        Q_init = copy.deepcopy(self.Q)
-        Q_action = copy.deepcopy(self.Q)
-        self.same_list = []
-        self.diff_list = []
-        self.node_assignments = {}
-        self.edge_expectations = []
-        self.edge_expectations_grad = []
-        self.policys = []
-        self.seq = [[i+1] for i in range(self.Q.shape[0])]
-        QAOA_diff_list = []
-        beta_diff_list = []
-        index = 0
-
-        
-        
-
-        while Q_init.shape[0] > self.n_c:
-            if self.b.ndim == 1:
-                self.beta = self.b
-            else:
-                self.beta = self.b[index]
-                
-                
-            if self.tree.state.value is None:
-                edge_expectations = self._qaoa_edge_expectations(
-                    Q_init
-                )
-                self.tree.state.value = edge_expectations
-            else:
-                edge_expectations = self.tree.state.value
-            selected_edge_idx, policy, edge_res = self._select_edge_to_cut(Q_action, edge_expectations)
-
-                
-
-            QAOA_diff = np.zeros_like(self.param)
-                
-            beta_diff = self._compute_grad_beta(selected_edge_idx, Q_action, policy, edge_res) * self.gamma ** (Q_init.shape[0] - index)
-            QAOA_diff_list.append(QAOA_diff)
-            beta_diff_list.append(beta_diff)
-
-            Q_init, Q_action = self._cut_edge(selected_edge_idx, edge_res, Q_action, Q_init)
-            index += 1
-            
-        self.tree.reset_state()
-        self.tree_grad.reset_state()
-        # Solve smaller problem using brute force
-        self.seq = [[i+1] for i in range(self.Q.shape[0])]
-        Value = self._brute_force_optimal()
-
-        # Copy lists to preserve their state
-        same_list_copy = copy.deepcopy(self.same_list)
-        diff_list_copy = copy.deepcopy(self.diff_list)
-
-        if self.n_c != self.Q.shape[0]:
-            QAOA_diff = np.sum(QAOA_diff_list, axis=0)
-        else:
-            QAOA_diff = None
-        if self.n_c != self.Q.shape[0]:
-            if self.beta.ndim == 1:
-                beta_diff = np.sum(beta_diff_list, axis=0)
-            else:
-                beta_diff = np.stack(beta_diff_list, axis=0)
-        else:
-            beta_diff = None
-
-        # If gradient calculation is enabled, return additional data
-        return QAOA_diff, beta_diff, Value, np.array(self.node_assignments), same_list_copy, diff_list_copy
-
-
-    def _qaoa_edge_expectations(self, Q):
-        """
-        Computes the expectation values of ZZ interactions for each edge in the given QUBO matrix.
-
-        Parameters
-        ----------
-        Q : np.ndarray
-            The QUBO matrix representing the optimization problem.
-
-        idx : int
-            Index for selecting the QAOA parameters.
-
-        Returns
-        -------
-        list
-            A list of expectation values for ZZ interactions of the edges in the QUBO matrix.
-        """
-        Q_cal = self._make_constraints(Q)
-        self.pulse = Pulse_simulation_fixed(ising_to_qubo(Q_cal))
         dev = qml.device("default.qubit", wires=Q.shape[0])
         @qml.qnode(dev)
         def circuit():
@@ -1821,10 +1150,7 @@ def add_zero_row_col(matrix, m):
 
     return new_matrix
 
-import copy
-import random
-from itertools import combinations
-import pennylane as qml
+
 
 
 
@@ -1928,7 +1254,7 @@ def signed_softmax_rewards(rewards, beta=15.0):
     return signed_rewards
 
 
-import copy
+
 
 class Edge:
     """

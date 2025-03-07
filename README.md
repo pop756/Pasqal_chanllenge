@@ -97,7 +97,7 @@ Now, we can **test and validate RL QAA on arbitrary constraint QUBO problems**,
 paving the way for **future experimental implementations on real quantum hardware.**
 
 
-![image-2.png](attachment:images/simul.png)
+![Logo](./images/simul.png)
 
 
 ---
@@ -117,7 +117,7 @@ Although we **cannot directly implement arbitrary QUBO problems** on current neu
 📌 **Reference:**  
 Nguyen *et al.*, *Phys. Rev. A* **107**, 022414 (2023). [DOI: 10.1103/PhysRevA.107.022414](https://link.aps.org/doi/10.1103/PhysRevA.107.022414)
 
-![image.png](attachment:images/MWIS.png)
+![image.png](images/MWIS.png)
 
 
 🚀 **Future Goal:**  
@@ -136,7 +136,7 @@ Below are the **visualized results** comparing **QAOA vs. QA Layer probability d
 - This results in **ineffective learning**, as AI cannot distinguish between optimal and suboptimal choices.
 
 
-![image-3.png](attachment:images/QAOA_res.png)
+![image-3.png](images/QAOA_res.png)
 
 ---
 
@@ -144,7 +144,7 @@ Below are the **visualized results** comparing **QAOA vs. QA Layer probability d
 - The probability mass is **focused on the optimal solutions**.
 - AI learning can now **reinforce** the best portfolios and improve training efficiency.
 
-![image-4.png](attachment:images/QAA_res.png)
+![image-4.png](images/QAA_res.png)
 
 ---
 
@@ -154,7 +154,7 @@ Below are the **visualized results** comparing **QAOA vs. QA Layer probability d
 - **RL QAA provides a more stable and efficient reinforcement learning framework for portfolio optimization**.
 - **Custom simulation tools enabled full QUBO adiabatic simulations, overcoming Pulser’s limitations**.
 - **MWIS-based methods will allow real hardware implementation of RL QAA in the future**.
-![image-5.png](attachment:images/RL_QAA.png)
+![image-5.png](images/RL_QAA.png)
 ---
 
 ## **How to Use the Simulation Code**

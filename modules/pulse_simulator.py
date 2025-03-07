@@ -132,14 +132,18 @@ class Pulse_simulation:
 
 class Pulse_simulation_fixed(Pulse_simulation):
     def __init__(self, Q,step_time = 10):
-        duration = 8000
+        duration = 4000
         
 
 
         Q_cal = Q/off_diagonal_median(Q)*32
         Q_diag = np.median(np.diag(Q_cal))
-        detuning = [[Q_diag/4 ,-Q_cal[i][i]/2] for i in range(len(Q_cal))]
-        amplitude = [[0,32/4,0] for i in range(len(Q_cal))]
+
+        if 0.5 < np.min(abs(np.diag(Q_cal))):
+            detuning = [[Q_diag/4 ,-Q_cal[i][i]/2+3] for i in range(len(Q_cal))]
+        else:
+            detuning = [[Q_diag/4 ,-Q_cal[i][i]/2] for i in range(len(Q_cal))]
+        amplitude = [[0,8,0] for i in range(len(Q_cal))]
         self.amplitude = amplitude
         self.detuning = detuning
         self.x_amp = [np.linspace(0,1,len(amplitude[i]))  for i in range(len(amplitude))]

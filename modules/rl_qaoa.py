@@ -211,7 +211,7 @@ class RL_QAOA:
         
 
         while Q_init.shape[0] > self.n_c:
-            Q_init = zero_lower_triangle(Q_init)/off_diagonal_median(zero_lower_triangle(Q_init)) * 8 ## Normalization
+            Q_init = zero_lower_triangle(Q_init)/off_diagonal_median(zero_lower_triangle(Q_init)) * 1 ## Normalization
             if self.b.ndim == 1:
                 self.beta = self.b
             else:
@@ -765,6 +765,7 @@ class RL_QAA(RL_QAOA):
         
 
         while Q_init.shape[0] > self.n_c:
+            Q_init = zero_lower_triangle(Q_init)
             if self.b.ndim == 1:
                 self.beta = self.b
             else:
@@ -989,8 +990,8 @@ class RL_QAOA_constraint(RL_QAOA):
             #batch_plus = np.where(batch_mean < 0, batch_mean, 0)
             #softmaxed_rewards = signed_softmax_rewards(batch_plus, beta=15)*episodes
             for index, val in enumerate(batch_mean):
-                QAOA_diff_list[index] *= -batch_mean[index]*10
-                beta_diff_list[index] *= -batch_mean[index]*10
+                QAOA_diff_list[index] *= -batch_mean[index]
+                beta_diff_list[index] *= -batch_mean[index]
                 #QAOA_diff_list[index] *= value_list[index]
                 #QAOA_diff_list[index] *= value_list[index]
             # Compute parameter updates
@@ -1058,7 +1059,6 @@ class RL_QAOA_constraint(RL_QAOA):
         self.edge_expectations = []
         self.edge_expectations_grad = []
         self.policys = []
-
         QAOA_diff_list = []
         beta_diff_list = []
         index = 0
@@ -1151,7 +1151,7 @@ class RL_QAOA_constraint(RL_QAOA):
         Q = add_constraint(node_weights, self.hamming_weight-hamming_weights_default)
         Q_res = zero_lower_triangle(qubo_to_ising(Q*self.penalty) + Q_init)
         if normalize:
-            Q_res = zero_lower_triangle(Q_res)/off_diagonal_median(zero_lower_triangle(Q_res)) * 8
+            Q_res = zero_lower_triangle(Q_res)/off_diagonal_median(zero_lower_triangle(Q_res)) * 1
         return Q_res
     
     def _cut_edge(self, selected_edge_idx, expectations, Q_action, Q_init):
@@ -1313,9 +1313,9 @@ class RL_QAOA_constraint(RL_QAOA):
 
 
         if self.qubo is not None:
-            best_value = ((-np.array(res_node)+1)/2)@self.qubo@((-np.array(res_node)+1)/2)
+            #best_value = ((-np.array(res_node)+1)/2)@self.qubo@((-np.array(res_node)+1)/2)
             if -np.sum((np.array(res_node)-1)/2) != self.hamming_weight:
-                self.const = False
+                self.const = True
                 self.node_assignments = res_node
                 return best_value
             # Store the optimal assignment

@@ -295,3 +295,45 @@ def plot_rl_qaoa_results(avg_values, min_values, prob_values,lable = "start"):
     plt.grid(True)
     plt.legend()
     plt.show()
+
+def plot_bitstring_counts(input_data, bitstring_counts,label,hamming_weight = None,node_weights = 1):
+    """
+    입력된 bitstring 목록을 기반으로 주어진 bitstring_counts에서 해당 bitstring을
+    빨간색 막대로 강조하고, 나머지는 파란색으로 표시하는 그래프를 생성합니다.
+
+    :param input_data: List of tuples (bitstring, value)
+    :param bitstring_counts: Dictionary (bitstring -> count)
+    """
+    import matplotlib.pyplot as plt
+
+    # 빨간색으로 강조할 bitstring 목록 추출
+    highlighted_strings = {bitstring for bitstring, _ in input_data}
+    bit_str = {}
+    # 데이터 준비
+    for key in bitstring_counts.keys():
+        count = 0
+        list_value = []
+        for bit in key:
+            list_value+=[int(bit)]
+        if hamming_weight is None:
+            bit_str[key] = bitstring_counts[key]
+        else:
+            try:
+                count = np.array(list_value)@np.array(node_weights)
+            except:
+                count = np.sum(np.array(list_value)*np.array(node_weights))
+            if  count == hamming_weight:
+                bit_str[key] = bitstring_counts[key]
+
+    bitstrings = list(bit_str.keys())
+    counts = np.array(list(bit_str.values()))/np.sum(list(bitstring_counts.values()))
+    colors = ['red' if bitstring in highlighted_strings else 'blue' for bitstring in bitstrings]
+    print(f'pass prob : {np.sum(list(bit_str.values()))/np.sum(list(bitstring_counts.values()))}')
+    # 막대 그래프 그리기
+    plt.figure(figsize=(10, 5))
+    plt.bar(bitstrings, counts, color=colors)
+    plt.xlabel("Bitstrings")
+    plt.ylabel("Counts")
+    plt.title(label)
+    plt.xticks(rotation=90)
+    plt.show()
